@@ -1,0 +1,1203 @@
+<!doctype html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pastel Hand Draw</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-10px); }
+    }
+
+    @keyframes sparkle {
+      0%, 100% { opacity: 0; transform: scale(0) rotate(0deg); }
+      50% { opacity: 1; transform: scale(1) rotate(180deg); }
+    }
+
+    @keyframes glow-pulse {
+      0%, 100% { filter: drop-shadow(0 0 8px currentColor); }
+      50% { filter: drop-shadow(0 0 16px currentColor); }
+    }
+
+    @keyframes wheel-open {
+      0% { transform: scale(0) rotate(-180deg); opacity: 0; }
+      100% { transform: scale(1) rotate(0deg); opacity: 1; }
+    }
+
+    @keyframes wheel-close {
+      0% { transform: scale(1) rotate(0deg); opacity: 1; }
+      100% { transform: scale(0) rotate(180deg); opacity: 0; }
+    }
+
+    @keyframes swipe-indicator {
+      0% { opacity: 0; transform: translateX(0) scale(0.8); }
+      50% { opacity: 1; transform: translateX(var(--swipe-dir)) scale(1); }
+      100% { opacity: 0; transform: translateX(calc(var(--swipe-dir) * 2)) scale(0.8); }
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Comic Sans MS', 'Chalkboard SE', 'Comic Neue', cursive, sans-serif;
+      background: linear-gradient(135deg, #ffc1e3 0%, #fff0f5 50%, #ffd4e5 100%);
+      overflow-x: hidden;
+    }
+
+    .glass-panel {
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(20px);
+      border: 2px solid rgba(255, 192, 227, 0.5);
+      box-shadow: 0 8px 32px rgba(255, 182, 193, 0.3);
+      border-radius: 24px;
+    }
+
+    .btn {
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+
+    .btn:hover {
+      transform: translateY(-2px) scale(1.02);
+      box-shadow: 0 8px 20px rgba(255, 182, 193, 0.4);
+    }
+
+    .btn:active {
+      transform: translateY(0px) scale(0.98);
+    }
+
+    .brush-size, .brush-style {
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+
+    .brush-size:hover, .brush-style:hover {
+      transform: scale(1.1) rotate(-5deg);
+    }
+
+    .brush-size.active, .brush-style.active {
+      background: linear-gradient(135deg, #ff69b4 0%, #ffb6d9 100%);
+      color: white;
+      box-shadow: 0 4px 16px rgba(255, 105, 180, 0.5);
+      transform: scale(1.05);
+    }
+
+    .status-indicator {
+      transition: all 0.4s ease;
+      box-shadow: 0 4px 16px rgba(255, 105, 180, 0.4);
+    }
+
+    .sparkle {
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      pointer-events: none;
+      z-index: 1000;
+    }
+
+    .sparkle::before,
+    .sparkle::after {
+      content: '✨';
+      position: absolute;
+      font-size: 20px;
+      animation: sparkle 1s ease-in-out forwards;
+    }
+
+    #skeleton-canvas {
+      animation: glow-pulse 2s ease-in-out infinite;
+    }
+
+    .cozy-header {
+      text-shadow: 2px 2px 4px rgba(255, 182, 193, 0.5);
+      animation: float 3s ease-in-out infinite;
+    }
+
+    .heart-emoji {
+      display: inline-block;
+      animation: float 2s ease-in-out infinite;
+      font-size: 1.2em;
+    }
+
+    /* Color Wheel Styles */
+    .color-wheel-container {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .color-btn {
+      width: 100%;
+      padding: 12px 24px;
+      border-radius: 16px;
+      border: 3px solid #ffb6d9;
+      background: linear-gradient(135deg, #ff69b4 0%, #ffb6d9 100%);
+      color: white;
+      font-weight: bold;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .color-btn:hover {
+      transform: translateY(-2px) scale(1.02);
+      box-shadow: 0 8px 20px rgba(255, 182, 193, 0.4);
+    }
+
+    .color-preview {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border: 3px solid white;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    .color-wheel-popup {
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      margin-top: 16px;
+      z-index: 100;
+      display: none;
+    }
+
+    .color-wheel-popup.open {
+      display: block;
+      animation: wheel-open 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    .color-wheel-popup.closing {
+      animation: wheel-close 0.3s ease-in forwards;
+    }
+
+    .color-wheel {
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      position: relative;
+      background: conic-gradient(
+        hsl(0, 85%, 65%),
+        hsl(30, 85%, 65%),
+        hsl(60, 85%, 65%),
+        hsl(90, 85%, 65%),
+        hsl(120, 85%, 65%),
+        hsl(150, 85%, 65%),
+        hsl(180, 85%, 65%),
+        hsl(210, 85%, 65%),
+        hsl(240, 85%, 65%),
+        hsl(270, 85%, 65%),
+        hsl(300, 85%, 65%),
+        hsl(330, 85%, 65%),
+        hsl(360, 85%, 65%)
+      );
+      box-shadow: 
+        0 0 0 6px white,
+        0 0 0 9px #ffb6d9,
+        0 12px 40px rgba(255, 105, 180, 0.4);
+      cursor: crosshair;
+    }
+
+    .color-wheel::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: radial-gradient(circle, white 0%, #fff0f5 100%);
+      box-shadow: inset 0 2px 8px rgba(255, 182, 193, 0.3);
+    }
+
+    .color-selector {
+      position: absolute;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 4px solid white;
+      box-shadow: 0 0 0 2px #ff69b4, 0 4px 12px rgba(0,0,0,0.3);
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      transition: box-shadow 0.2s ease;
+    }
+
+    .saturation-slider, .lightness-slider {
+      width: 180px;
+      margin-top: 8px;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 12px;
+      border-radius: 6px;
+      outline: none;
+      box-shadow: 0 2px 8px rgba(255, 182, 193, 0.3);
+    }
+
+    .saturation-slider {
+      margin-top: 12px;
+      background: linear-gradient(to right, #ccc, #ff69b4);
+    }
+
+    .lightness-slider {
+      background: linear-gradient(to right, #333, #ff69b4, #fff);
+    }
+
+    .saturation-slider::-webkit-slider-thumb,
+    .lightness-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: white;
+      border: 3px solid #ff69b4;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    .saturation-slider::-moz-range-thumb,
+    .lightness-slider::-moz-range-thumb {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: white;
+      border: 3px solid #ff69b4;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    .wheel-wrapper {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(20px);
+      padding: 20px;
+      border-radius: 24px;
+      border: 2px solid rgba(255, 192, 227, 0.5);
+      box-shadow: 0 12px 40px rgba(255, 182, 193, 0.4);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .slider-label {
+      font-size: 11px;
+      color: #ff69b4;
+      font-weight: bold;
+      margin-top: 8px;
+    }
+
+    /* Undo/Redo buttons */
+    .undo-redo-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      border: 3px solid #ffb6d9;
+      background: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      font-size: 18px;
+    }
+
+    .undo-redo-btn:hover:not(:disabled) {
+      transform: scale(1.1);
+      box-shadow: 0 4px 16px rgba(255, 105, 180, 0.4);
+    }
+
+    .undo-redo-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .undo-redo-btn:active:not(:disabled) {
+      transform: scale(0.95);
+    }
+
+    /* Swipe indicator */
+    .swipe-indicator {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 64px;
+      pointer-events: none;
+      z-index: 1000;
+      opacity: 0;
+    }
+
+    .swipe-indicator.show-undo {
+      --swipe-dir: -30px;
+      animation: swipe-indicator 0.6s ease-out forwards;
+    }
+
+    .swipe-indicator.show-redo {
+      --swipe-dir: 30px;
+      animation: swipe-indicator 0.6s ease-out forwards;
+    }
+
+    /* Brush style icons */
+    .brush-style-icon {
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+  </style>
+</head>
+<body class="h-full overflow-auto">
+  <div id="sparkles-container"></div>
+  <div id="swipe-indicator" class="swipe-indicator"></div>
+
+  <div class="min-h-full w-full p-4 md:p-6 flex flex-col">
+    <header class="text-center mb-4">
+      <h1 class="cozy-header text-3xl md:text-4xl font-bold" style="color: #ff69b4;">
+        <span class="heart-emoji">💖</span> Pastel Hand Draw <span class="heart-emoji" style="animation-delay: 0.5s;">💖</span>
+      </h1>
+      <p class="text-pink-600 text-sm mt-2" style="text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);">
+        Pinch to draw • Open palm to erase • Swipe for undo/redo ✨
+      </p>
+    </header>
+
+    <div class="flex justify-center mb-4">
+      <div class="glass-panel px-6 py-3 rounded-full" style="background: rgba(255, 240, 245, 0.9);">
+        <span id="status-text" class="font-medium text-sm" style="color: #ff69b4;">Starting camera...</span>
+      </div>
+    </div>
+
+    <div class="flex justify-center mb-4">
+      <div id="mode-indicator" class="status-indicator px-6 py-3 rounded-full text-white font-bold text-sm" style="background: linear-gradient(135deg, #ffb6d9 0%, #ff69b4 100%);">
+        ✋ Move
+      </div>
+    </div>
+
+    <div class="flex-1 flex flex-col lg:flex-row gap-4 max-w-7xl mx-auto w-full">
+      <div class="w-full lg:w-72 flex-shrink-0">
+        <div class="glass-panel p-4">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="font-bold text-sm" style="color: #ff69b4;">📹 Camera View</span>
+          </div>
+          <div class="rounded-2xl overflow-hidden relative" style="aspect-ratio: 4/3; background: linear-gradient(135deg, #ffe4f0 0%, #ffd4e5 100%);">
+            <video id="camera-video" class="w-full h-full object-cover" autoplay playsinline muted style="transform: scaleX(-1);"></video>
+            <canvas id="skeleton-canvas" class="absolute inset-0 w-full h-full" style="transform: scaleX(-1);"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex-1 flex flex-col min-w-0">
+        <div class="relative flex-1 min-h-[400px] rounded-3xl overflow-hidden shadow-2xl" style="background: white; border: 4px solid #ffb6d9;" id="canvas-container">
+          <canvas id="drawing-canvas" class="absolute inset-0 w-full h-full"></canvas>
+        </div>
+      </div>
+
+      <div class="w-full lg:w-72 flex-shrink-0 flex flex-col gap-4">
+        <div class="glass-panel p-5">
+          <div class="font-bold text-sm mb-4 text-center" style="color: #ff69b4;">🎨 Colors</div>
+          <div class="color-wheel-container">
+            <button id="color-btn" class="color-btn">
+              <span>Pick Color</span>
+              <div id="color-preview" class="color-preview" style="background: #ff8fab;"></div>
+            </button>
+            <div id="color-wheel-popup" class="color-wheel-popup">
+              <div class="wheel-wrapper">
+                <div id="color-wheel" class="color-wheel">
+                  <div id="color-selector" class="color-selector"></div>
+                </div>
+                <span class="slider-label">Saturation</span>
+                <input type="range" id="saturation-slider" class="saturation-slider" min="30" max="100" value="75">
+                <span class="slider-label">Lightness</span>
+                <input type="range" id="lightness-slider" class="lightness-slider" min="30" max="85" value="65">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="glass-panel p-5">
+          <div class="font-bold text-sm mb-4 text-center" style="color: #ff69b4;">🖌️ Brush Style</div>
+          <div class="flex gap-3 justify-center flex-wrap">
+            <button class="brush-style w-14 h-14 rounded-2xl bg-white flex flex-col items-center justify-center active" data-style="normal" style="border: 2px solid #ffb6d9;" title="Normal">
+              <div class="brush-style-icon">✏️</div>
+              <span style="font-size: 8px; color: #ff69b4;">Normal</span>
+            </button>
+            <button class="brush-style w-14 h-14 rounded-2xl bg-white flex flex-col items-center justify-center" data-style="marker" style="border: 2px solid #ffb6d9;" title="Marker">
+              <div class="brush-style-icon">🖊️</div>
+              <span style="font-size: 8px; color: #ff69b4;">Marker</span>
+            </button>
+            <button class="brush-style w-14 h-14 rounded-2xl bg-white flex flex-col items-center justify-center" data-style="spray" style="border: 2px solid #ffb6d9;" title="Spray Paint">
+              <div class="brush-style-icon">💨</div>
+              <span style="font-size: 8px; color: #ff69b4;">Spray</span>
+            </button>
+            <button class="brush-style w-14 h-14 rounded-2xl bg-white flex flex-col items-center justify-center" data-style="crayon" style="border: 2px solid #ffb6d9;" title="Crayon">
+              <div class="brush-style-icon">🖍️</div>
+              <span style="font-size: 8px; color: #ff69b4;">Crayon</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="glass-panel p-5">
+          <div class="font-bold text-sm mb-4 text-center" style="color: #ff69b4;">✏️ Brush Size</div>
+          <div class="flex gap-3 justify-center">
+            <button class="brush-size w-14 h-14 rounded-2xl bg-white border-3 flex items-center justify-center" data-size="3" style="border: 2px solid #ffb6d9;">
+              <div style="width: 6px; height: 6px; border-radius: 50%; background: #ff69b4;"></div>
+            </button>
+            <button class="brush-size w-14 h-14 rounded-2xl bg-white border-3 flex items-center justify-center active" data-size="8" style="border: 2px solid #ffb6d9;">
+              <div style="width: 12px; height: 12px; border-radius: 50%; background: #ff69b4;"></div>
+            </button>
+            <button class="brush-size w-14 h-14 rounded-2xl bg-white border-3 flex items-center justify-center" data-size="15" style="border: 2px solid #ffb6d9;">
+              <div style="width: 20px; height: 20px; border-radius: 50%; background: #ff69b4;"></div>
+            </button>
+          </div>
+        </div>
+
+        <div class="glass-panel p-5">
+          <div class="font-bold text-sm mb-3 text-center" style="color: #ff69b4;">↩️ Undo / Redo</div>
+          <div class="flex gap-4 justify-center">
+            <button id="undo-btn" class="undo-redo-btn" disabled title="Undo (Swipe Left)">
+              ↩️
+            </button>
+            <button id="redo-btn" class="undo-redo-btn" disabled title="Redo (Swipe Right)">
+              ↪️
+            </button>
+          </div>
+          <p class="text-xs text-center mt-2" style="color: #ff69b4; opacity: 0.7;">Swipe ← Undo | Swipe → Redo</p>
+        </div>
+
+        <div class="glass-panel p-5">
+          <div class="font-bold text-sm mb-3 text-center" style="color: #ff69b4;">💫 Actions</div>
+          <div class="flex flex-col gap-3">
+            <button id="clear-btn" class="btn py-3 rounded-2xl text-white font-bold text-sm" style="background: linear-gradient(135deg, #ff69b4 0%, #ffb6d9 100%);">
+              🗑️ Clear Canvas
+            </button>
+            <button id="save-btn" class="btn bg-white py-3 rounded-2xl font-bold text-sm" style="color: #ff69b4; border: 3px solid #ffb6d9;">
+              💾 Save Drawing
+            </button>
+          </div>
+        </div>
+
+        <div class="glass-panel p-5">
+          <div class="font-bold text-sm mb-3 text-center" style="color: #ff69b4;">📝 How to Use</div>
+          <div class="text-xs space-y-2" style="color: #ff69b4;">
+            <p><strong>✌️ Pinch</strong> (thumb + index) → Draw</p>
+            <p><strong>✋ Open Palm</strong> → Erase mode</p>
+            <p><strong>👈 Swipe Left</strong> → Undo</p>
+            <p><strong>👉 Swipe Right</strong> → Redo</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentHue = 340;
+    let currentSaturation = 75;
+    let currentLightness = 65;
+    let currentColor = `hsl(${currentHue}, ${currentSaturation}%, ${currentLightness}%)`;
+    let brushSize = 8;
+    let brushStyle = 'normal';
+    let lastX = 0;
+    let lastY = 0;
+    let isPinching = false;
+    let wasDrawing = false;
+    let isErasing = false;
+    let colorWheelOpen = false;
+
+    // Undo/Redo system
+    const MAX_HISTORY = 30;
+    let undoStack = [];
+    let redoStack = [];
+
+    // Swipe detection for undo/redo
+    let swipeStartX = 0;
+    let swipeStartY = 0;
+    let swipeTracking = false;
+    const SWIPE_THRESHOLD = 0.15; // Minimum horizontal distance for swipe
+    const SWIPE_VERTICAL_LIMIT = 0.1; // Max vertical movement allowed
+
+    let smoothedX = 0;
+    let smoothedY = 0;
+    const SMOOTHING_FACTOR = 0.6;
+
+    const drawingCanvas = document.getElementById('drawing-canvas');
+    const ctx = drawingCanvas.getContext('2d', { alpha: false });
+    const skeletonCanvas = document.getElementById('skeleton-canvas');
+    const skeletonCtx = skeletonCanvas.getContext('2d');
+
+    const PINCH_THRESHOLD = 0.06;
+    const OPEN_PALM_THRESHOLD = 0.15;
+
+    // Color Wheel Elements
+    const colorBtn = document.getElementById('color-btn');
+    const colorWheelPopup = document.getElementById('color-wheel-popup');
+    const colorWheel = document.getElementById('color-wheel');
+    const colorSelector = document.getElementById('color-selector');
+    const colorPreview = document.getElementById('color-preview');
+    const saturationSlider = document.getElementById('saturation-slider');
+    const lightnessSlider = document.getElementById('lightness-slider');
+
+    // Undo/Redo buttons
+    const undoBtn = document.getElementById('undo-btn');
+    const redoBtn = document.getElementById('redo-btn');
+    const swipeIndicator = document.getElementById('swipe-indicator');
+
+    function saveState() {
+      const imageData = ctx.getImageData(0, 0, drawingCanvas.width, drawingCanvas.height);
+      undoStack.push(imageData);
+      if (undoStack.length > MAX_HISTORY) {
+        undoStack.shift();
+      }
+      redoStack = [];
+      updateUndoRedoButtons();
+    }
+
+    function undo() {
+      if (undoStack.length > 0) {
+        const currentState = ctx.getImageData(0, 0, drawingCanvas.width, drawingCanvas.height);
+        redoStack.push(currentState);
+        const previousState = undoStack.pop();
+        ctx.putImageData(previousState, 0, 0);
+        updateUndoRedoButtons();
+        showSwipeIndicator('undo');
+        updateStatus('Undo! ↩️');
+      }
+    }
+
+    function redo() {
+      if (redoStack.length > 0) {
+        const currentState = ctx.getImageData(0, 0, drawingCanvas.width, drawingCanvas.height);
+        undoStack.push(currentState);
+        const nextState = redoStack.pop();
+        ctx.putImageData(nextState, 0, 0);
+        updateUndoRedoButtons();
+        showSwipeIndicator('redo');
+        updateStatus('Redo! ↪️');
+      }
+    }
+
+    function updateUndoRedoButtons() {
+      undoBtn.disabled = undoStack.length === 0;
+      redoBtn.disabled = redoStack.length === 0;
+    }
+
+    function showSwipeIndicator(type) {
+      swipeIndicator.textContent = type === 'undo' ? '↩️' : '↪️';
+      swipeIndicator.classList.remove('show-undo', 'show-redo');
+      void swipeIndicator.offsetWidth; // Trigger reflow
+      swipeIndicator.classList.add(type === 'undo' ? 'show-undo' : 'show-redo');
+    }
+
+    undoBtn.addEventListener('click', undo);
+    redoBtn.addEventListener('click', redo);
+
+    function updateColor() {
+      currentColor = `hsl(${currentHue}, ${currentSaturation}%, ${currentLightness}%)`;
+      colorPreview.style.background = currentColor;
+      colorSelector.style.background = currentColor;
+      
+      saturationSlider.style.background = `linear-gradient(to right, hsl(${currentHue}, 30%, ${currentLightness}%), hsl(${currentHue}, 100%, ${currentLightness}%))`;
+      lightnessSlider.style.background = `linear-gradient(to right, hsl(${currentHue}, ${currentSaturation}%, 30%), hsl(${currentHue}, ${currentSaturation}%, 65%), hsl(${currentHue}, ${currentSaturation}%, 85%))`;
+    }
+
+    function positionSelector() {
+      const wheelRect = colorWheel.getBoundingClientRect();
+      const centerX = wheelRect.width / 2;
+      const centerY = wheelRect.height / 2;
+      const radius = (wheelRect.width / 2) - 20;
+      
+      const angle = (currentHue - 90) * (Math.PI / 180);
+      const x = centerX + radius * Math.cos(angle);
+      const y = centerY + radius * Math.sin(angle);
+      
+      colorSelector.style.left = x + 'px';
+      colorSelector.style.top = y + 'px';
+    }
+
+    function handleWheelClick(e) {
+      const rect = colorWheel.getBoundingClientRect();
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      const x = e.clientX - rect.left - centerX;
+      const y = e.clientY - rect.top - centerY;
+      
+      const distFromCenter = Math.sqrt(x * x + y * y);
+      if (distFromCenter < 30) return;
+      
+      let angle = Math.atan2(y, x) * (180 / Math.PI);
+      currentHue = (angle + 90 + 360) % 360;
+      
+      positionSelector();
+      updateColor();
+    }
+
+    colorBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (colorWheelOpen) {
+        colorWheelPopup.classList.add('closing');
+        setTimeout(() => {
+          colorWheelPopup.classList.remove('open', 'closing');
+          colorWheelOpen = false;
+        }, 300);
+      } else {
+        colorWheelPopup.classList.add('open');
+        colorWheelOpen = true;
+        positionSelector();
+        updateColor();
+      }
+    });
+
+    colorWheel.addEventListener('mousedown', (e) => {
+      handleWheelClick(e);
+      
+      const onMove = (e) => handleWheelClick(e);
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+
+    colorWheel.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      handleWheelClick(touch);
+    });
+
+    colorWheel.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      handleWheelClick(touch);
+    });
+
+    saturationSlider.addEventListener('input', (e) => {
+      currentSaturation = parseInt(e.target.value);
+      updateColor();
+    });
+
+    lightnessSlider.addEventListener('input', (e) => {
+      currentLightness = parseInt(e.target.value);
+      updateColor();
+    });
+
+    document.addEventListener('click', (e) => {
+      if (colorWheelOpen && !colorWheelPopup.contains(e.target) && e.target !== colorBtn) {
+        colorWheelPopup.classList.add('closing');
+        setTimeout(() => {
+          colorWheelPopup.classList.remove('open', 'closing');
+          colorWheelOpen = false;
+        }, 300);
+      }
+    });
+
+    updateColor();
+    setTimeout(positionSelector, 100);
+
+    // Brush style selection
+    document.querySelectorAll('.brush-style').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.brush-style').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        brushStyle = btn.dataset.style;
+        updateStatus(`Brush: ${brushStyle.charAt(0).toUpperCase() + brushStyle.slice(1)} 🖌️`);
+      });
+    });
+
+    function createSparkle(x, y) {
+      const sparkle = document.createElement('div');
+      sparkle.className = 'sparkle';
+      sparkle.style.left = x + 'px';
+      sparkle.style.top = y + 'px';
+      document.getElementById('sparkles-container').appendChild(sparkle);
+
+      setTimeout(() => sparkle.remove(), 1000);
+    }
+
+    function resizeCanvases() {
+      const container = document.getElementById('canvas-container');
+      const rect = container.getBoundingClientRect();
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = drawingCanvas.width;
+      tempCanvas.height = drawingCanvas.height;
+      const tempCtx = tempCanvas.getContext('2d');
+      tempCtx.drawImage(drawingCanvas, 0, 0);
+      drawingCanvas.width = rect.width;
+      drawingCanvas.height = rect.height;
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+      ctx.drawImage(tempCanvas, 0, 0);
+    }
+
+    resizeCanvases();
+    window.addEventListener('resize', resizeCanvases);
+
+    document.querySelectorAll('.brush-size').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.brush-size').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        brushSize = parseInt(btn.dataset.size);
+      });
+    });
+
+    // Different brush drawing functions
+    function drawNormal(x, y) {
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = currentColor;
+      ctx.lineWidth = brushSize;
+      ctx.globalCompositeOperation = 'source-over';
+
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    }
+
+    function drawMarker(x, y) {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.lineCap = 'square';
+      ctx.lineJoin = 'miter';
+      
+      // Semi-transparent for marker effect
+      const hslMatch = currentColor.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+      if (hslMatch) {
+        ctx.strokeStyle = `hsla(${hslMatch[1]}, ${hslMatch[2]}%, ${hslMatch[3]}%, 0.6)`;
+      } else {
+        ctx.strokeStyle = currentColor;
+      }
+      ctx.lineWidth = brushSize * 2;
+
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    }
+
+    function drawSpray(x, y) {
+      ctx.globalCompositeOperation = 'source-over';
+      const density = brushSize * 3;
+      const radius = brushSize * 2;
+      
+      ctx.fillStyle = currentColor;
+      
+      for (let i = 0; i < density; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const r = Math.random() * radius;
+        const offsetX = Math.cos(angle) * r;
+        const offsetY = Math.sin(angle) * r;
+        
+        ctx.beginPath();
+        ctx.arc(x + offsetX, y + offsetY, Math.random() * 1.5 + 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawCrayon(x, y) {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      
+      // Draw multiple offset lines for texture
+      const hslMatch = currentColor.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+      
+      for (let i = 0; i < 3; i++) {
+        const offsetX = (Math.random() - 0.5) * brushSize * 0.5;
+        const offsetY = (Math.random() - 0.5) * brushSize * 0.5;
+        const alpha = 0.3 + Math.random() * 0.4;
+        
+        if (hslMatch) {
+          ctx.strokeStyle = `hsla(${hslMatch[1]}, ${hslMatch[2]}%, ${hslMatch[3]}%, ${alpha})`;
+        } else {
+          ctx.strokeStyle = currentColor;
+        }
+        ctx.lineWidth = brushSize * (0.8 + Math.random() * 0.4);
+        
+        ctx.beginPath();
+        ctx.moveTo(lastX + offsetX, lastY + offsetY);
+        ctx.lineTo(x + offsetX, y + offsetY);
+        ctx.stroke();
+      }
+    }
+
+    function draw(x, y) {
+      switch(brushStyle) {
+        case 'marker':
+          drawMarker(x, y);
+          break;
+        case 'spray':
+          drawSpray(x, y);
+          break;
+        case 'crayon':
+          drawCrayon(x, y);
+          break;
+        default:
+          drawNormal(x, y);
+      }
+
+      if (Math.random() > 0.7) {
+        const sparkleX = x + (Math.random() - 0.5) * 30;
+        const sparkleY = y + (Math.random() - 0.5) * 30;
+        createSparkle(sparkleX, sparkleY);
+      }
+
+      lastX = x;
+      lastY = y;
+    }
+
+    function erase(x, y) {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath();
+      ctx.arc(x, y, brushSize * 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+
+      if (Math.random() > 0.8) {
+        createSparkle(x, y);
+      }
+
+      lastX = x;
+      lastY = y;
+    }
+
+    function updateStatus(text) {
+      document.getElementById('status-text').textContent = text;
+    }
+
+    function updateMode(isPinched, isOpenPalm) {
+      const indicator = document.getElementById('mode-indicator');
+
+      if (isPinched) {
+        indicator.style.background = 'linear-gradient(135deg, #ff69b4 0%, #ff1493 100%)';
+        indicator.textContent = '✏️ Drawing';
+        updateStatus('Drawing! 🎨');
+        isErasing = false;
+      } else if (isOpenPalm) {
+        indicator.style.background = 'linear-gradient(135deg, #b19cd9 0%, #9370db 100%)';
+        indicator.textContent = '🧹 Erasing';
+        updateStatus('Erasing! 🧹');
+        isErasing = true;
+      } else {
+        indicator.style.background = 'linear-gradient(135deg, #ffb6d9 0%, #ff69b4 100%)';
+        indicator.textContent = '✋ Move';
+        updateStatus('Move mode - pinch to draw, open palm to erase');
+        isErasing = false;
+      }
+    }
+
+    const HAND_CONNECTIONS = [
+      [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],
+      [0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]
+    ];
+
+    const FINGERTIPS = [4, 8, 12, 16, 20];
+
+    function drawHandSkeleton(landmarks, isPinched, isOpenPalm) {
+      skeletonCtx.clearRect(0, 0, skeletonCanvas.width, skeletonCanvas.height);
+
+      let lineColor, dotColor, glowColor;
+
+      if (isPinched) {
+        lineColor = 'rgba(255, 105, 180, 0.9)';
+        dotColor = '#ff69b4';
+        glowColor = '#ff69b4';
+      } else if (isOpenPalm) {
+        lineColor = 'rgba(177, 156, 217, 0.9)';
+        dotColor = '#b19cd9';
+        glowColor = '#b19cd9';
+      } else {
+        lineColor = 'rgba(255, 182, 217, 0.9)';
+        dotColor = '#ffb6d9';
+        glowColor = '#ffb6d9';
+      }
+
+      skeletonCtx.shadowBlur = 15;
+      skeletonCtx.shadowColor = glowColor;
+      skeletonCtx.lineWidth = 3;
+      skeletonCtx.lineCap = 'round';
+      skeletonCtx.strokeStyle = lineColor;
+
+      for (const [start, end] of HAND_CONNECTIONS) {
+        const sp = landmarks[start];
+        const ep = landmarks[end];
+        skeletonCtx.beginPath();
+        skeletonCtx.moveTo(sp.x * skeletonCanvas.width, sp.y * skeletonCanvas.height);
+        skeletonCtx.lineTo(ep.x * skeletonCanvas.width, ep.y * skeletonCanvas.height);
+        skeletonCtx.stroke();
+      }
+
+      for (let i = 0; i < landmarks.length; i++) {
+        const pt = landmarks[i];
+        const x = pt.x * skeletonCanvas.width;
+        const y = pt.y * skeletonCanvas.height;
+        let r = FINGERTIPS.includes(i) ? 7 : 5;
+
+        if (isPinched && (i === 4 || i === 8)) {
+          r = 10;
+        }
+
+        skeletonCtx.beginPath();
+        skeletonCtx.arc(x, y, r, 0, Math.PI * 2);
+        skeletonCtx.fillStyle = dotColor;
+        skeletonCtx.fill();
+
+        skeletonCtx.beginPath();
+        skeletonCtx.arc(x, y, r + 2, 0, Math.PI * 2);
+        skeletonCtx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+        skeletonCtx.lineWidth = 2;
+        skeletonCtx.stroke();
+      }
+
+      skeletonCtx.shadowBlur = 0;
+    }
+
+    function calculateDistance(point1, point2) {
+      const dx = point1.x - point2.x;
+      const dy = point1.y - point2.y;
+      const dz = point1.z - point2.z;
+      return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    function isOpenPalm(landmarks) {
+      const thumbTip = landmarks[4];
+      const indexTip = landmarks[8];
+      const middleTip = landmarks[12];
+      const ringTip = landmarks[16];
+      const pinkyTip = landmarks[20];
+      const wrist = landmarks[0];
+
+      const distances = [
+        calculateDistance(indexTip, middleTip),
+        calculateDistance(middleTip, ringTip),
+        calculateDistance(ringTip, pinkyTip)
+      ];
+
+      const avgDistance = distances.reduce((a, b) => a + b) / distances.length;
+
+      const fingerLengths = [
+        calculateDistance(indexTip, wrist),
+        calculateDistance(middleTip, wrist),
+        calculateDistance(ringTip, wrist),
+        calculateDistance(pinkyTip, wrist)
+      ];
+
+      const avgFingerLength = fingerLengths.reduce((a, b) => a + b) / fingerLengths.length;
+
+      return avgDistance > OPEN_PALM_THRESHOLD && avgFingerLength > 0.3;
+    }
+
+    // Detect swipe gestures based on hand movement
+    function detectSwipe(landmarks) {
+      const wrist = landmarks[0];
+      
+      if (!swipeTracking) {
+        swipeStartX = wrist.x;
+        swipeStartY = wrist.y;
+        swipeTracking = true;
+        return null;
+      }
+      
+      const deltaX = swipeStartX - wrist.x; // Inverted because camera is mirrored
+      const deltaY = Math.abs(wrist.y - swipeStartY);
+      
+      // Check if it's a horizontal swipe
+      if (Math.abs(deltaX) > SWIPE_THRESHOLD && deltaY < SWIPE_VERTICAL_LIMIT) {
+        swipeTracking = false;
+        swipeStartX = wrist.x;
+        swipeStartY = wrist.y;
+        
+        if (deltaX > 0) {
+          return 'left'; // Undo
+        } else {
+          return 'right'; // Redo
+        }
+      }
+      
+      // Update start position for continuous tracking
+      if (Math.abs(deltaX) < 0.05 && deltaY < 0.05) {
+        swipeStartX = wrist.x;
+        swipeStartY = wrist.y;
+      }
+      
+      return null;
+    }
+
+    let lastSwipeTime = 0;
+    const SWIPE_COOLDOWN = 800; // ms between swipes
+
+    function onHandResults(results) {
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const landmarks = results.multiHandLandmarks[0];
+
+        const thumbTip = landmarks[4];
+        const indexTip = landmarks[8];
+        const distance = calculateDistance(thumbTip, indexTip);
+        const currentlyPinching = distance < PINCH_THRESHOLD;
+        const currentlyOpenPalm = !currentlyPinching && isOpenPalm(landmarks);
+
+        // Detect swipe when not pinching or erasing
+        if (!currentlyPinching && !currentlyOpenPalm) {
+          const now = Date.now();
+          if (now - lastSwipeTime > SWIPE_COOLDOWN) {
+            const swipe = detectSwipe(landmarks);
+            if (swipe === 'left') {
+              undo();
+              lastSwipeTime = now;
+            } else if (swipe === 'right') {
+              redo();
+              lastSwipeTime = now;
+            }
+          }
+        } else {
+          swipeTracking = false;
+        }
+
+        updateMode(currentlyPinching, currentlyOpenPalm);
+        drawHandSkeleton(landmarks, currentlyPinching, currentlyOpenPalm);
+
+        const drawX = (thumbTip.x + indexTip.x) / 2;
+        const drawY = (thumbTip.y + indexTip.y) / 2;
+
+        const canvasRect = drawingCanvas.getBoundingClientRect();
+        const targetX = (1 - drawX) * canvasRect.width;
+        const targetY = drawY * canvasRect.height;
+
+        if (smoothedX === 0 && smoothedY === 0) {
+          smoothedX = targetX;
+          smoothedY = targetY;
+        } else {
+          smoothedX = smoothedX + (targetX - smoothedX) * SMOOTHING_FACTOR;
+          smoothedY = smoothedY + (targetY - smoothedY) * SMOOTHING_FACTOR;
+        }
+
+        if (currentlyPinching) {
+          if (wasDrawing) {
+            draw(smoothedX, smoothedY);
+          } else {
+            // Save state when starting to draw
+            saveState();
+            lastX = smoothedX;
+            lastY = smoothedY;
+            wasDrawing = true;
+          }
+        } else if (currentlyOpenPalm) {
+          if (!wasDrawing) {
+            saveState();
+          }
+          erase(smoothedX, smoothedY);
+          wasDrawing = true;
+        } else {
+          lastX = smoothedX;
+          lastY = smoothedY;
+          wasDrawing = false;
+        }
+
+        isPinching = currentlyPinching;
+
+      } else {
+        skeletonCtx.clearRect(0, 0, skeletonCanvas.width, skeletonCanvas.height);
+        wasDrawing = false;
+        smoothedX = 0;
+        smoothedY = 0;
+        swipeTracking = false;
+        updateStatus('Show your hand to the camera! 👋');
+      }
+    }
+
+    async function startCamera() {
+      try {
+        updateStatus('Starting camera... 📹');
+
+        const video = document.getElementById('camera-video');
+        const hands = new Hands({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+          maxNumHands: 1,
+          modelComplexity: 0,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onHandResults);
+
+        const camera = new Camera(video, {
+          onFrame: async () => {
+            await hands.send({ image: video });
+          },
+          width: 640,
+          height: 480
+        });
+
+        await camera.start();
+        skeletonCanvas.width = 640;
+        skeletonCanvas.height = 480;
+        updateStatus('Camera ready! Start drawing! 🎨');
+      } catch (error) {
+        console.error('Camera error:', error);
+        updateStatus('Camera access denied 😢');
+      }
+    }
+
+    setTimeout(startCamera, 500);
+
+    document.getElementById('clear-btn').addEventListener('click', () => {
+      saveState();
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+      updateStatus('Canvas cleared! ✨');
+
+      for (let i = 0; i < 10; i++) {
+        setTimeout(() => {
+          const x = Math.random() * window.innerWidth;
+          const y = Math.random() * window.innerHeight;
+          createSparkle(x, y);
+        }, i * 100);
+      }
+    });
+
+    document.getElementById('save-btn').addEventListener('click', () => {
+      const link = document.createElement('a');
+      link.download = 'my-pastel-drawing.png';
+      link.href = drawingCanvas.toDataURL('image/png');
+      link.click();
+      updateStatus('Drawing saved! 💾');
+
+      for (let i = 0; i < 5; i++) {
+        setTimeout(() => {
+          const x = Math.random() * window.innerWidth;
+          const y = Math.random() * window.innerHeight;
+          createSparkle(x, y);
+        }, i * 100);
+      }
+    });
+
+    // Keyboard shortcuts for undo/redo
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+        e.preventDefault();
+        redo();
+      }
+    });
+  </script>
+</body>
+</html>
